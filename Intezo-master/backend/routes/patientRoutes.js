@@ -14,34 +14,55 @@ import Patient from '../models/Patient.js';
 import redisClient from '../config/redis.js';
 import Clinic from '../models/Clinic.js';
 import Queue from '../models/Queue.js';
+import Doctor from '../models/Doctor.js'; // Add this import
 
 const router = express.Router();
 
 // Public routes
 router.post('/register', registerPatient);
-// Add to patientRoutes.js
 router.post('/register-and-queue', registerPatientAndAddToQueue);
-
 router.put('/:patientId', updatePatientInfo);
 router.get('/:patientId/history', getPatientQueueHistory);
+
+// Add doctor-specific booking route
+router.post('/book-doctor', authenticatePatient, async (req, res) => {
+  try {
+    const { clinicId, doctorId } = req.body;
+    
+    const result = await bookNumber({
+      body: {
+        clinicId,
+        patientId: req.patient._id,
+        doctorId
+      }
+    }, res);
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Protected routes
 router.use(authenticatePatient);
 router.get('/profile', getPatientProfile);
 router.put('/fcm-token', updateFCMToken);
-// router.get('/queue-status', getCurrentQueueStatus);
-// Add to patientRoutes.js - protected route
 
-// In patientRoutes.js - Update the queue-status endpoint
+// Update queue-status endpoint to handle doctor-specific queues
 router.get('/queue-status', authenticatePatient, async (req, res) => {
   try {
     const patient = await Patient.findById(req.patient._id)
       .populate({
         path: 'currentQueue',
-        populate: {
-          path: 'clinic',
-          select: 'name address operatingHours'
-        }
+        populate: [
+          {
+            path: 'clinic',
+            select: 'name address operatingHours'
+          },
+          {
+            path: 'doctor',
+            select: 'name specialty'
+          }
+        ]
       });
 
     if (!patient || !patient.currentQueue) {
@@ -50,8 +71,12 @@ router.get('/queue-status', authenticatePatient, async (req, res) => {
 
     const queue = patient.currentQueue;
     
-    // Get current serving number from Redis
-    const currentNumber = parseInt(await redisClient.get(`clinic:${queue.clinic._id}:current`) || 0);
+    if (!queue.doctor) {
+      return res.status(400).json({ error: 'Queue is not associated with a doctor' });
+    }
+    
+    // Get current serving number from Redis for the doctor
+    const currentNumber = parseInt(await redisClient.get(`doctor:${queue.doctor._id}:current`) || 0);
     const position = queue.number - currentNumber;
 
     // Calculate estimated wait time
@@ -73,6 +98,11 @@ router.get('/queue-status', authenticatePatient, async (req, res) => {
           name: queue.clinic.name,
           address: queue.clinic.address,
           operatingHours: queue.clinic.operatingHours
+        },
+        doctor: {
+          _id: queue.doctor._id,
+          name: queue.doctor.name,
+          specialty: queue.doctor.specialty
         }
       }
     });
@@ -83,7 +113,5 @@ router.get('/queue-status', authenticatePatient, async (req, res) => {
 });
 
 router.delete('/cancel-booking', cancelBooking);
-// Update patientRoutes.js
-
 
 export default router;

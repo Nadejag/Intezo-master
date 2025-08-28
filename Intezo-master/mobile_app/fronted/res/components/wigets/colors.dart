@@ -15,4 +15,6 @@ class colors{
   final bluecolor4= Colors.blue.shade700;
   final redcolor1=Colors.red.shade500;
   final redcolor2=Colors.red.shade300;
+  static final graycolor1=Colors.grey.shade800;
 }
+

@@ -4,9 +4,14 @@ import 'package:flutter/foundation.dart';
 
 class QueueUpdateEvent {
   final String clinicId;
+  final String? doctorId; // Add doctorId field
   final Map<String, dynamic> queueData;
 
-  QueueUpdateEvent({required this.clinicId, required this.queueData});
+  QueueUpdateEvent({
+    required this.clinicId,
+    this.doctorId,
+    required this.queueData
+  });
 }
 
 class ClinicStatusUpdateEvent {

@@ -49,7 +49,7 @@ class _databuttonState extends State<databutton> {
       controller: widget.controller,
       focusNode: _focusNode,
       keyboardType: widget.keyboardType,
-      cursorColor: colors().bluecolor3,
+      cursorColor: colors().bluecolor1,
       cursorWidth: 2.1,
       cursorHeight: height * 0.02,
       style: TextStyle(fontWeight: FontWeight.w500, fontSize: 14,color: widget.color),
@@ -60,7 +60,7 @@ class _databuttonState extends State<databutton> {
           fontSize: 14.5,
           fontWeight: FontWeight.w600,
           color: _focusNode.hasFocus
-              ? colors().bluecolor3
+              ? colors().bluecolor1
               : Colors.grey[500],
         ),
         isDense: true,
@@ -70,7 +70,7 @@ class _databuttonState extends State<databutton> {
           borderSide: BorderSide(color: Colors.grey, width: 1.2),
         ),
         focusedBorder: OutlineInputBorder(
-          borderSide: BorderSide(color: colors().bluecolor3, width: 2.1),
+          borderSide: BorderSide(color: colors().bluecolor1, width: 2.1),
         ),
       ),
     );

@@ -29,16 +29,27 @@ class ApiService {
   }
 
   // Update the get method to accept a parameter for public endpoints
-  static Future<dynamic> get(String endpoint, {bool isPublic = false}) async {
+  // lib/services/api_service.dart - Update the get method
+  // lib/services/api_service.dart - Update get method
+  static Future<dynamic> get(String endpoint, {
+    bool isPublic = false,
+    Map<String, dynamic>? queryParams
+  }) async {
     try {
       final headers = isPublic ? await _getPublicHeaders() : await _getHeaders();
-      final url = '$baseUrl/$endpoint';
+
+      // Build URL with query parameters
+      Uri url = Uri.parse('$baseUrl/$endpoint');
+      if (queryParams != null) {
+        url = url.replace(queryParameters: queryParams.map((key, value) =>
+            MapEntry(key, value.toString())));
+      }
 
       print('Making GET request to: $url');
       print('Headers: $headers');
 
       final response = await http.get(
-        Uri.parse(url),
+        url,
         headers: headers,
       );
 
@@ -58,22 +69,36 @@ class ApiService {
 
   // Also update other methods if needed for consistency
   // In api_service.dart - Update the post method
+  // Update post method to handle different status codes
   static Future<dynamic> post(String endpoint, dynamic data, {bool isPublic = false}) async {
     try {
       final headers = isPublic ? await _getPublicHeaders() : await _getHeaders();
       final response = await http.post(
         Uri.parse('$baseUrl/$endpoint'),
         headers: headers,
-        body: data != null ? json.encode(data) : '{}', // Handle empty data
+        body: data != null ? json.encode(data) : '{}',
       );
 
-      // Accept both 200 (OK) and 201 (Created) as success
+      print('POST Response status: ${response.statusCode}');
+      print('POST Response body: ${response.body}');
+
+      final responseBody = json.decode(response.body);
+
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return json.decode(response.body);
+        return responseBody;
+      } else if (response.statusCode == 400) {
+        // Handle validation errors
+        if (responseBody.containsKey('error')) {
+          throw Exception(responseBody['error']);
+        }
+        throw Exception('Bad request: ${response.statusCode}');
+      } else if (response.statusCode == 404) {
+        throw Exception('Resource not found');
       } else {
         throw Exception('Failed to post data: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
+      print('POST Error: $e');
       throw Exception('Error: $e');
     }
   }

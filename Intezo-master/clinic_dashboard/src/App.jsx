@@ -12,6 +12,8 @@ import Patients from './pages/Patients';
 import Staff from './pages/Staff';
 import Analytics from './pages/Analytics';
 import Settings from './pages/Settings';
+import Doctors from './pages/Doctors';
+import DoctorDashboard from './components/Dashboard/DoctorDashboard';
 
 function App() {
   return (
@@ -32,6 +34,8 @@ function App() {
                   <Route path="/staff" element={<Staff />} />
                   <Route path="/analytics" element={<Analytics />} />
                   <Route path="/settings" element={<Settings />} />
+                  <Route path="doctors" element={<Doctors />} />
+                  <Route path="/doctor-dashboard/:doctorId" element={<DoctorDashboard />} />
                 </Route>
 
                 <Route path="*" element={<Navigate to="/" replace />} />

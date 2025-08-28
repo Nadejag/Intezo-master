@@ -42,6 +42,8 @@ router.get('/:clinicId/status', async (req, res) => {
   }
 });
 
+
+
 // Protected routes
 router.use(authenticate, authorizeClinic);
 router.get('/status', getClinicStatus);

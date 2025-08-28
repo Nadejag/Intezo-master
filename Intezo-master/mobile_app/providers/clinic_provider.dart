@@ -34,11 +34,7 @@ class ClinicProvider with ChangeNotifier {
       _clinics = List<Map<String, dynamic>>.from(response);
       print('Loaded ${_clinics.length} clinics from backend');
 
-      // Since backend doesn't have status endpoint, set default values
-      for (var clinic in _clinics) {
-        clinic['isOpen'] = true; // Default all clinics to open
-        clinic['operatingHours'] = {'opening': '09:00', 'closing': '17:00'};
-      }
+      // Backend now provides isOpen status, no need to override
 
       _isLoading = false;
       notifyListeners();
@@ -95,7 +91,9 @@ class ClinicProvider with ChangeNotifier {
   }
 
 // In clinic_provider.dart - Update loadCurrentQueue method
-  Future<void> loadCurrentQueue(String clinicId, {bool forceRefresh = false}) async {
+// In clinic_provider.dart - Update loadCurrentQueue method
+// lib/providers/clinic_provider.dart - Update loadCurrentQueue method
+  Future<void> loadCurrentQueue(String clinicId, {bool forceRefresh = false, String? doctorId}) async {
     if (!forceRefresh && _currentQueue != null) {
       // Check if data is fresh (less than 30 seconds old)
       final lastUpdated = _currentQueue?['_lastUpdated'];
@@ -108,7 +106,7 @@ class ClinicProvider with ChangeNotifier {
     }
 
     try {
-      final response = await ClinicService.getRealTimeQueue(clinicId);
+      final response = await ClinicService.getRealTimeQueue(clinicId, doctorId: doctorId);
 
       // Always create a valid queue data structure even if response is empty
       _currentQueue = {
@@ -118,7 +116,8 @@ class ClinicProvider with ChangeNotifier {
         'totalWaiting': response['totalWaiting'] ?? 0,
         'avgWaitTime': response['avgWaitTime'] ?? 15,
         'canCallNext': response['canCallNext'] ?? false,
-        '_lastUpdated': DateTime.now().toIso8601String()
+        '_lastUpdated': DateTime.now().toIso8601String(),
+        'isDoctorQueue': doctorId != null // Add flag to identify doctor-specific queue
       };
 
       notifyListeners();
@@ -132,44 +131,45 @@ class ClinicProvider with ChangeNotifier {
         'totalWaiting': 0,
         'avgWaitTime': 15,
         'canCallNext': false,
-        '_lastUpdated': DateTime.now().toIso8601String()
+        '_lastUpdated': DateTime.now().toIso8601String(),
+        'isDoctorQueue': doctorId != null
       };
       notifyListeners();
     }
   }
 
 // lib/services/clinic_service.dart - Update the bookQueueNumber method
-   Future<Map<String, dynamic>> bookQueueNumber(String clinicId, String patientId) async {
+// Update the bookQueueNumber method
+  Future<Map<String, dynamic>> bookQueueNumber(String clinicId, String patientId, {String? doctorId}) async {
     try {
-      print('Booking queue for clinic: $clinicId, patient: $patientId');
-
-      final response = await ApiService.post('queues/book', {
-        'clinicId': clinicId,
-        'patientId': patientId,
-      });
-
-      print('Booking response: $response');
-
-      if (response is Map<String, dynamic>) {
-        return response;
-      } else if (response != null) {
-        // Handle case where response might be a different type
-        return {'success': true, 'response': response};
-      } else {
-        throw Exception('Booking failed: No valid response from server');
+      if (doctorId == null) {
+        throw Exception('Doctor ID is required for booking');
       }
+
+      final result = await ClinicService.bookQueueNumber(clinicId, patientId, doctorId: doctorId);
+
+      // Handle the new response format from backend
+      if (result.containsKey('error')) {
+        throw Exception(result['error']);
+      }
+
+      return result;
     } catch (e) {
-      print('Booking error details: $e');
-
-      // Check if it's a 201 error (which is actually success)
-      if (e.toString().contains('201')) {
-        // This is actually success - return a success response
-        return {'success': true, 'statusCode': 201};
-      }
-
+      print('Booking error in provider: $e');
       throw Exception('Failed to book queue number: $e');
     }
   }
+
+// Update getDoctors method
+  Future<List<Map<String, dynamic>>> getDoctors(String clinicId) async {
+    try {
+      return await ClinicService.getDoctors(clinicId);
+    } catch (e) {
+      print('Error getting doctors: $e');
+      return [];
+    }
+  }
+
 
   // ADD THIS METHOD - to get queue status
   Future<Map<String, dynamic>?> getQueueStatus(String queueId) async {
@@ -192,18 +192,41 @@ class ClinicProvider with ChangeNotifier {
   }
 
   // ADD THIS METHOD - to get patient's current queue
+// In clinic_provider.dart - Update getPatientCurrentQueue method
   Future<Map<String, dynamic>?> getPatientCurrentQueue() async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      final response = await ClinicService.getPatientCurrentQueue();
+      final response = await ApiService.get('patients/queue-status');
+      print('Patient queue status response: $response');
+
+      if (response != null && response is Map<String, dynamic>) {
+        // Check if patient was served and clear the booking
+        if (response['currentQueue'] != null &&
+            response['currentQueue']['status'] == 'served') {
+          // Patient was served, emit event for real-time updates
+          // EventBus().emitPatientServed(PatientServedEvent(
+          //   patientId: response['currentQueue']['_id'],
+          //   bookingData: response['currentQueue']
+          // ));
+          _isLoading = false;
+          notifyListeners();
+          return {'currentQueue': null, 'message': 'Patient has been served'};
+        }
+        
+        // Return the response as-is, let the UI handle the logic
+        _isLoading = false;
+        notifyListeners();
+        return response;
+      }
+
       _isLoading = false;
       notifyListeners();
-      // FIX: Handle null response
-      return response != null ? Map<String, dynamic>.from(response) : null;
+      return null;
     } catch (e) {
+      print('Error getting patient queue: $e');
       _error = e.toString();
       _isLoading = false;
       notifyListeners();
@@ -211,33 +234,30 @@ class ClinicProvider with ChangeNotifier {
     }
   }
 
-  final SocketService _socketService = SocketService();
+  final SocketService _socketService = SocketService.instance;
   String? _currentListeningClinicId;
   Timer? _pollingTimer;
 
-// In clinic_provider.dart - Improve real-time handling
-  // In startListeningForUpdates method - Replace with this:
-  void startListeningForUpdates(String clinicId) {
-    if (_currentListeningClinicId != clinicId) {
-      stopListeningForUpdates();
-      stopPolling();
+  void startListeningForUpdates(String clinicId, {String? doctorId}) {
+    if (_currentListeningClinicId == clinicId) return;
+    
+    stopListeningForUpdates();
+    stopPolling();
 
-      _currentListeningClinicId = clinicId;
+    _currentListeningClinicId = clinicId;
 
-      // Start polling as fallback
-      startPollingForUpdates(clinicId);
-
-      // Try to connect to Pusher for real-time updates
-      _connectToPusher(clinicId);
+    _connectToPusher(clinicId, doctorId: doctorId);
+    startPollingForUpdates(clinicId, doctorId: doctorId);
 
       // Listen to event bus for queue updates
       _queueUpdateSubscription = EventBus().onQueueUpdate.listen((event) {
-        if (event.clinicId == clinicId) {
-          print('Real-time queue update received for clinic $clinicId: ${event.queueData}');
+        if (event.clinicId == clinicId && event.doctorId == doctorId) {
+          print('Real-time queue update received for clinic $clinicId, doctor: $doctorId: ${event.queueData}');
 
           _currentQueue = {
             ...event.queueData,
-            '_lastUpdated': DateTime.now().toIso8601String()
+            '_lastUpdated': DateTime.now().toIso8601String(),
+            'isDoctorQueue': doctorId != null
           };
 
           notifyListeners();
@@ -268,24 +288,32 @@ class ClinicProvider with ChangeNotifier {
           }
         }
       });
-    }
+  }
+
+  void startPollingForUpdates(String clinicId, {String? doctorId}) {
+    // Polling completely disabled to prevent home screen refresh
   }
 
 // Add this method to connect to Pusher
-  Future<void> _connectToPusher(String clinicId) async {
+  Future<void> _connectToPusher(String clinicId, {String? doctorId}) async {
     try {
-      await _socketService.connect(clinicId: clinicId);
-      print('Pusher connection initiated for clinic: $clinicId');
+      _socketService.setFallbackCallback((fallbackClinicId, fallbackDoctorId) {
+        print('Pusher failed, using polling for: $fallbackClinicId');
+        startPollingForUpdates(fallbackClinicId, doctorId: fallbackDoctorId);
+      });
+      
+      await _socketService.connect(clinicId: clinicId, doctorId: doctorId);
+      print('Pusher connection for clinic: $clinicId${doctorId != null ? ', doctor: $doctorId' : ''}');
     } catch (e) {
-      print('Failed to connect to Pusher: $e');
-      // Fallback to polling only
-      print('Falling back to polling for clinic: $clinicId');
+      print('Pusher connection failed: $e');
+      startPollingForUpdates(clinicId, doctorId: doctorId);
     }
   }
 
-// Add these class variables
-  StreamSubscription? _queueUpdateSubscription;
-  StreamSubscription? _clinicStatusSubscription;
+  void stopListeningForUpdates() {
+    _socketService.disconnect();
+    _currentListeningClinicId = null;
+  }
 
   void clearSpecificError(String errorPattern) {
     if (_error != null && _error!.contains(errorPattern)) {
@@ -293,7 +321,11 @@ class ClinicProvider with ChangeNotifier {
       notifyListeners();
     }
   }
-// Update dispose method
+
+// Add these class variables
+  StreamSubscription? _queueUpdateSubscription;
+  StreamSubscription? _clinicStatusSubscription;
+
   @override
   void dispose() {
     stopListeningForUpdates();
@@ -303,34 +335,14 @@ class ClinicProvider with ChangeNotifier {
     super.dispose();
   }
 
-  void startPollingForUpdates(String clinicId) {
-    stopPolling();
-
-    _pollingTimer = Timer.periodic(Duration(seconds: 5), (_) async {
-      print('Polling for updates for clinic: $clinicId');
-
-      // Load both queue and status
-      await loadCurrentQueue(clinicId, forceRefresh: true);
-      await loadClinicStatus(clinicId);
-    });
-  }
-
-  void stopListeningForUpdates() {
-    _socketService.disconnect();
-    _currentListeningClinicId = null;
-  }
-
   void stopPolling() {
     _pollingTimer?.cancel();
     _pollingTimer = null;
   }
 
-  // @override
-  // void dispose() {
-  //   stopListeningForUpdates();
-  //   stopPolling();
-  //   super.dispose();
-  // }
+  void startPollingForClinicUpdates() {
+    // Polling disabled to prevent screen flickering
+  }
 
   void clearError() {
     _error = null;

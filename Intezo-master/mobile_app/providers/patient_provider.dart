@@ -1,6 +1,9 @@
 // lib/providers/patient_provider.dart
 import 'package:flutter/foundation.dart';
 import '../services/auth_service.dart';
+import '../services/database_service.dart';
+import '../models/patient.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class PatientProvider with ChangeNotifier {
   Map<String, dynamic>? _patientData;
@@ -39,13 +42,34 @@ class PatientProvider with ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     } catch (e) {
-      _error = e.toString();
+      // Try to load from local database if network fails
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final patientId = prefs.getString('patientId');
+        
+        if (patientId != null) {
+          final patient = await DatabaseService.getPatient(patientId);
+          if (patient != null) {
+            _patientData = patient.toJson();
+          }
+        }
+      } catch (dbError) {
+        print('Failed to load from database: $dbError');
+      }
+      
+      _error = _patientData == null ? e.toString() : null;
       _isLoading = false;
       notifyListeners();
     }
   }
 
   void clearError() {
+    _error = null;
+    notifyListeners();
+  }
+  void clearData() {
+    _patientData = null;
+    _isLoading = false;
     _error = null;
     notifyListeners();
   }

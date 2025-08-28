@@ -1,8 +1,9 @@
-// lib/fronted/res/components/wigets/searchflutter.dart - Professional Design
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:qatar_app/services/clinic_service.dart';
+import '../../../../providers/theme_provider.dart';
 import 'colors.dart';
 import 'hospitalinfrom.dart';
 
@@ -19,6 +20,7 @@ class _MainPageStateState extends State<MainPageState> {
   List<Map<String, dynamic>> _filteredClinics = [];
   bool _isLoading = true;
   bool _isSearching = false;
+  String? _errorMessage;
   Timer? _debounceTimer;
   final FocusNode _searchFocusNode = FocusNode();
 
@@ -41,6 +43,7 @@ class _MainPageStateState extends State<MainPageState> {
     try {
       setState(() {
         _isLoading = true;
+        _errorMessage = null;
       });
 
       final clinics = await ClinicService.getClinics();
@@ -55,6 +58,7 @@ class _MainPageStateState extends State<MainPageState> {
         _isLoading = false;
         _clinics = [];
         _filteredClinics = [];
+        _errorMessage = 'Failed to load clinics';
       });
     }
   }
@@ -80,9 +84,11 @@ class _MainPageStateState extends State<MainPageState> {
       final suggestions = _clinics.where((clinic) {
         final clinicName = clinic['name']?.toString().toLowerCase() ?? '';
         final clinicAddress = clinic['address']?.toString().toLowerCase() ?? '';
-        final clinicServices = (clinic['services'] as List<dynamic>?)
-            ?.map((service) => service.toString().toLowerCase())
-            .join(' ') ?? '';
+        final clinicServices =
+            (clinic['services'] as List<dynamic>?)
+                ?.map((service) => service.toString().toLowerCase())
+                .join(' ') ??
+                '';
 
         return clinicName.contains(lowercaseQuery) ||
             clinicAddress.contains(lowercaseQuery) ||
@@ -98,33 +104,41 @@ class _MainPageStateState extends State<MainPageState> {
 
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.sizeOf(context).width;
-    final height = MediaQuery.sizeOf(context).height;
-    final theme = Theme.of(context);
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isDarkMode = themeProvider.isDarkMode;
 
     return Scaffold(
+      backgroundColor: isDarkMode
+          ? AppColors.darkBackground
+          : AppColors.lightBackground,
       appBar: AppBar(
-        title: const Text('Find Clinics',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+        title: const Text(
+          'Find Clinics',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+        ),
         centerTitle: true,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, size: 24),
+          icon: Icon(
+            Icons.arrow_back,
+            size: 24,
+            color: isDarkMode ? Colors.white70 : Colors.black54,
+          ),
           onPressed: () => Navigator.of(context).pop(),
         ),
         elevation: 0,
-        backgroundColor: Colors.white,
+        backgroundColor: isDarkMode ? AppColors.darkCard : Colors.white,
         foregroundColor: colors().bluecolor1,
       ),
       body: Column(
         children: [
-          // Search Header
+          // Search Header - Made more compact
           Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
             decoration: BoxDecoration(
               color: colors().bluecolor1,
               borderRadius: const BorderRadius.only(
-                bottomLeft: Radius.circular(20),
-                bottomRight: Radius.circular(20),
+                bottomLeft: Radius.circular(16),
+                bottomRight: Radius.circular(16),
               ),
             ),
             child: Column(
@@ -132,16 +146,16 @@ class _MainPageStateState extends State<MainPageState> {
                 Text(
                   'Find Healthcare Services',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.w500,
                     color: Colors.white,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 4),
                 Text(
                   'Search by name, location, or specialty',
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 12,
                     color: Colors.white.withOpacity(0.9),
                   ),
                 ),
@@ -149,18 +163,18 @@ class _MainPageStateState extends State<MainPageState> {
             ),
           ),
 
-          // Search Field
+          // Search Field - Made more compact
           Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
+                color: isDarkMode ? AppColors.darkCard : Colors.white,
+                borderRadius: BorderRadius.circular(12),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
+                    color: Colors.black.withOpacity(isDarkMode ? 0.1 : 0.08),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
                   ),
                 ],
               ),
@@ -172,27 +186,31 @@ class _MainPageStateState extends State<MainPageState> {
                   hintText: "Search clinics...",
                   border: InputBorder.none,
                   contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 18,
+                    horizontal: 16,
+                    vertical: 14,
                   ),
                   hintStyle: TextStyle(
-                    fontSize: 16,
-                    color: Colors.grey.shade500,
+                    fontSize: 14,
+                    color: isDarkMode
+                        ? AppColors.darkSubtext
+                        : Colors.grey.shade500,
                   ),
                   prefixIcon: Icon(
                     Icons.search,
                     color: colors().bluecolor1,
-                    size: 24,
+                    size: 22,
                   ),
                   suffixIcon: _isSearching
                       ? Padding(
-                    padding: const EdgeInsets.all(12.0),
+                    padding: const EdgeInsets.all(10.0),
                     child: SizedBox(
-                      width: 16,
-                      height: 16,
+                      width: 14,
+                      height: 14,
                       child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation(colors().bluecolor1),
+                        strokeWidth: 1.5,
+                        valueColor: AlwaysStoppedAnimation(
+                          colors().bluecolor1,
+                        ),
                       ),
                     ),
                   )
@@ -200,7 +218,10 @@ class _MainPageStateState extends State<MainPageState> {
                       ? IconButton(
                     icon: Icon(
                       Icons.clear,
-                      color: Colors.grey.shade500,
+                      color: isDarkMode
+                          ? Colors.white70
+                          : Colors.grey.shade500,
+                      size: 20,
                     ),
                     onPressed: () {
                       controller.clear();
@@ -210,25 +231,27 @@ class _MainPageStateState extends State<MainPageState> {
                       : null,
                 ),
                 style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.grey.shade800,
+                  fontSize: 14,
+                  color: isDarkMode ? AppColors.darkText : AppColors.lightText,
                 ),
                 onChanged: _searchClinics,
               ),
             ),
           ),
 
-          // Results Counter
-          if (_filteredClinics.isNotEmpty && !_isLoading)
+          // Results Counter - Made more compact
+          if (_filteredClinics.isNotEmpty && !_isLoading && _errorMessage == null)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
               child: Row(
                 children: [
                   Text(
                     '${_filteredClinics.length} ${_filteredClinics.length == 1 ? 'clinic' : 'clinics'} found',
                     style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey.shade600,
+                      fontSize: 12,
+                      color: isDarkMode
+                          ? AppColors.darkSubtext
+                          : Colors.grey.shade600,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -236,18 +259,14 @@ class _MainPageStateState extends State<MainPageState> {
               ),
             ),
 
-          const SizedBox(height: 8),
-
           // Results List
-          Expanded(
-            child: _buildResultsList(),
-          ),
+          Expanded(child: _buildResultsList(isDarkMode)),
         ],
       ),
     );
   }
 
-  Widget _buildResultsList() {
+  Widget _buildResultsList(bool isDarkMode) {
     if (_isLoading) {
       return Center(
         child: Column(
@@ -256,13 +275,58 @@ class _MainPageStateState extends State<MainPageState> {
             CircularProgressIndicator(
               valueColor: AlwaysStoppedAnimation(colors().bluecolor1),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             Text(
               'Loading clinics...',
               style: TextStyle(
-                color: Colors.grey.shade600,
-                fontSize: 14,
+                color: isDarkMode
+                    ? AppColors.darkSubtext
+                    : Colors.grey.shade600,
+                fontSize: 13,
               ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_errorMessage != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.wifi_off,
+              size: 48,
+              color: isDarkMode ? Colors.grey.shade400 : Colors.grey.shade500,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Unable to load clinics',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+                color: isDarkMode ? AppColors.darkText : Colors.grey.shade700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Please check your connection and try again',
+              style: TextStyle(
+                fontSize: 14,
+                color: isDarkMode ? AppColors.darkSubtext : Colors.grey.shade600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _loadClinics,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: colors().bluecolor1,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              ),
+              child: const Text('Try Again'),
             ),
           ],
         ),
@@ -276,33 +340,35 @@ class _MainPageStateState extends State<MainPageState> {
           children: [
             Icon(
               Icons.search_off,
-              size: 64,
-              color: Colors.grey.shade400,
+              size: 48,
+              color: isDarkMode ? Colors.grey.shade600 : Colors.grey.shade400,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             Text(
               controller.text.isEmpty
                   ? 'No clinics available'
                   : 'No results found for "${controller.text}"',
               style: TextStyle(
-                color: Colors.grey.shade600,
-                fontSize: 16,
+                color: isDarkMode ? AppColors.darkText : Colors.grey.shade600,
+                fontSize: 14,
                 fontWeight: FontWeight.w500,
               ),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
               'Try different keywords or check your spelling',
               style: TextStyle(
-                color: Colors.grey.shade500,
-                fontSize: 14,
+                color: isDarkMode
+                    ? AppColors.darkSubtext
+                    : Colors.grey.shade500,
+                fontSize: 12,
               ),
               textAlign: TextAlign.center,
             ),
             if (controller.text.isNotEmpty)
               Padding(
-                padding: const EdgeInsets.only(top: 16),
+                padding: const EdgeInsets.only(top: 12),
                 child: ElevatedButton(
                   onPressed: () {
                     controller.clear();
@@ -311,11 +377,11 @@ class _MainPageStateState extends State<MainPageState> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: colors().bluecolor1,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 12,
+                      horizontal: 20,
+                      vertical: 10,
                     ),
                   ),
                   child: const Text(
@@ -323,6 +389,7 @@ class _MainPageStateState extends State<MainPageState> {
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w500,
+                      fontSize: 12,
                     ),
                   ),
                 ),
@@ -333,38 +400,38 @@ class _MainPageStateState extends State<MainPageState> {
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       itemCount: _filteredClinics.length,
       itemBuilder: (context, index) {
         final clinic = _filteredClinics[index];
-        return _buildClinicListItem(clinic);
+        return _buildClinicListItem(clinic, isDarkMode);
       },
     );
   }
 
-  Widget _buildClinicListItem(Map<String, dynamic> clinic) {
+  Widget _buildClinicListItem(Map<String, dynamic> clinic, bool isDarkMode) {
     final isOpen = clinic['isOpen'] ?? false;
     final clinicName = clinic['name'] ?? 'Unknown Clinic';
     final clinicAddress = clinic['address'] ?? 'No address provided';
     final services = (clinic['services'] as List<dynamic>?)?.join(', ') ?? '';
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        color: isDarkMode ? AppColors.darkCard : Colors.white,
+        borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+            color: Colors.black.withOpacity(isDarkMode ? 0.1 : 0.06),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
           ),
         ],
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
           onTap: () {
             Navigator.push(
               context,
@@ -374,58 +441,64 @@ class _MainPageStateState extends State<MainPageState> {
             );
           },
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(12),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Clinic Icon
+                // Clinic Icon - Made smaller
                 Container(
-                  width: 48,
-                  height: 48,
+                  width: 40,
+                  height: 40,
                   decoration: BoxDecoration(
                     color: colors().bluecolor1.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(10),
                   ),
                   child: Icon(
                     Icons.medical_services,
                     color: colors().bluecolor1,
-                    size: 24,
+                    size: 20,
                   ),
                 ),
-                const SizedBox(width: 16),
+                const SizedBox(width: 12),
 
-                // Clinic Info
+                // Clinic Info - Made more compact
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         clinicName,
-                        style: const TextStyle(
-                          fontSize: 16,
+                        style: TextStyle(
+                          fontSize: 14,
                           fontWeight: FontWeight.w600,
-                          color: Colors.black87,
+                          color: isDarkMode
+                              ? AppColors.darkText
+                              : Colors.black87,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 2),
                       Text(
                         clinicAddress,
                         style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey.shade600,
+                          fontSize: 12,
+                          color: isDarkMode
+                              ? AppColors.darkSubtext
+                              : Colors.grey.shade600,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       if (services.isNotEmpty) ...[
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 2),
                         Text(
                           services,
                           style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade500,
+                            fontSize: 11,
+                            color: isDarkMode
+                                ? AppColors.darkSubtext
+                                : Colors.grey.shade500,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -435,16 +508,19 @@ class _MainPageStateState extends State<MainPageState> {
                   ),
                 ),
 
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
 
-                // Status Badge
+                // Status Badge - Made smaller
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: isOpen
                         ? Colors.green.withOpacity(0.1)
                         : Colors.red.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(8),
                     border: Border.all(
                       color: isOpen ? Colors.green : Colors.red,
                       width: 1,
@@ -454,7 +530,7 @@ class _MainPageStateState extends State<MainPageState> {
                     isOpen ? 'OPEN' : 'CLOSED',
                     style: TextStyle(
                       color: isOpen ? Colors.green : Colors.red,
-                      fontSize: 11,
+                      fontSize: 10,
                       fontWeight: FontWeight.w600,
                     ),
                   ),

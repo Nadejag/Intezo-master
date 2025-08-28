@@ -1,8 +1,11 @@
 // lib/fronted/view/clinic_booking_screen.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/clinic_provider.dart';
+import '../../services/event_bus.dart';
 import '../res/components/wigets/colors.dart';
 
 class ClinicBookingScreen extends StatefulWidget {
@@ -18,11 +21,27 @@ class _ClinicBookingScreenState extends State<ClinicBookingScreen> {
   bool _isLoading = true;
   Map<String, dynamic>? _queueData;
   String? _error;
+  StreamSubscription? _queueUpdateSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadClinicQueue();
+    _setupRealTimeUpdates();
+  }
+
+  void _setupRealTimeUpdates() {
+    _queueUpdateSubscription = EventBus().onQueueUpdate.listen((event) {
+      if (event.clinicId == widget.clinic['_id'] && mounted) {
+        _loadClinicQueue();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _queueUpdateSubscription?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadClinicQueue() async {

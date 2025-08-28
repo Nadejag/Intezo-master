@@ -1,0 +1,493 @@
+// src/pages/Doctors.scss
+@import '../styles/variables.scss';
+
+.doctors-page {
+  padding: 20px;
+
+  .page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+
+    h1 {
+      color: $primary-color;
+      margin: 0;
+      font-size: 28px;
+      font-weight: 700;
+    }
+  }
+
+  .error-message {
+    background-color: #fee;
+    color: #c33;
+    padding: 12px 15px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    border-left: 4px solid #c33;
+    font-weight: 500;
+  }
+
+  .doctor-form-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+
+    .doctor-form {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      width: 90%;
+      max-width: 600px;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+
+      h2 {
+        margin-top: 0;
+        color: $primary-color;
+        font-size: 24px;
+        margin-bottom: 20px;
+      }
+
+      .form-group {
+        margin-bottom: 20px;
+
+        label {
+          display: block;
+          margin-bottom: 8px;
+          font-weight: 600;
+          color: #444;
+        }
+
+        input[type="text"],
+        input[type="number"],
+        input[type="time"] {
+          width: 100%;
+          padding: 12px;
+          border: 1px solid #ddd;
+          border-radius: 6px;
+          font-size: 16px;
+          transition: border-color 0.3s;
+
+          &:focus {
+            outline: none;
+            border-color: $primary-color;
+            box-shadow: 0 0 0 2px rgba($primary-color, 0.2);
+          }
+        }
+
+        .days-checkboxes {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 12px;
+
+          .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-weight: normal;
+            cursor: pointer;
+            background: #f8f9fa;
+            padding: 8px 12px;
+            border-radius: 6px;
+            transition: background-color 0.2s;
+
+            &:hover {
+              background: #e9ecef;
+            }
+
+            input[type="checkbox"]:checked + span {
+              font-weight: 600;
+              color: $primary-color;
+            }
+          }
+        }
+
+        &.time-range {
+          .time-inputs {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+
+            span {
+              font-weight: 500;
+              color: #666;
+            }
+          }
+        }
+      }
+
+      .form-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+        margin-top: 30px;
+      }
+    }
+  }
+
+  .doctors-list {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 40px;
+      color: #888;
+      background: #f9f9f9;
+      border-radius: 12px;
+      
+      p {
+        font-size: 18px;
+        margin: 0;
+      }
+    }
+
+    .doctor-card {
+      background: white;
+      border-radius: 12px;
+      padding: 0;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+      display: flex;
+      transition: transform 0.2s, box-shadow 0.2s;
+      
+      &:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+      }
+
+      .doctor-info {
+        flex: 1;
+        padding: 25px;
+        border-right: 1px solid #f0f0f0;
+        
+        h3 {
+          margin: 0 0 12px 0;
+          color: $primary-color;
+          font-size: 22px;
+        }
+
+        .specialty {
+          font-weight: 600;
+          color: #555;
+          margin: 0 0 12px 0;
+          font-size: 16px;
+        }
+
+        .fee {
+          margin: 0 0 12px 0;
+          color: #666;
+          font-size: 15px;
+          
+          strong {
+            color: #e91e63;
+          }
+        }
+
+        .availability {
+          margin: 0 0 15px 0;
+          font-size: 14px;
+          color: #666;
+          line-height: 1.5;
+        }
+
+        .status-container {
+          display: flex;
+          gap: 10px;
+          margin-bottom: 15px;
+          flex-wrap: wrap;
+          
+          .status {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            
+            &.active {
+              background-color: #e8f5e8;
+              color: #2e7d32;
+            }
+            
+            &.inactive {
+              background-color: #ffebee;
+              color: #c62828;
+            }
+          }
+          
+          .availability-status {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            
+            &.available {
+              background-color: #e8f5e8;
+              color: #2e7d32;
+            }
+            
+            &.unavailable {
+              background-color: #fff3cd;
+              color: #856404;
+            }
+          }
+        }
+        
+        .queue-info {
+          background: #f8f9fa;
+          padding: 15px;
+          border-radius: 8px;
+          margin-top: 15px;
+          
+          h4 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            color: #444;
+          }
+          
+          .queue-stats {
+            display: flex;
+            gap: 20px;
+            
+            .stat {
+              text-align: center;
+              
+              .value {
+                font-size: 24px;
+                font-weight: 700;
+                color: $primary-color;
+                display: block;
+              }
+              
+              .label {
+                font-size: 12px;
+                color: #666;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+              }
+            }
+            
+            .current-serving {
+              .value {
+                color: #28a745;
+              }
+            }
+            
+            .waiting {
+              .value {
+                color: #ff6b35;
+              }
+            }
+          }
+        }
+      }
+
+      .doctor-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 25px;
+        justify-content: center;
+        min-width: 200px;
+        
+        button {
+          width: 100%;
+          padding: 10px;
+          border-radius: 6px;
+          font-weight: 600;
+          font-size: 14px;
+          transition: all 0.2s;
+          
+          &:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+          }
+        }
+      }
+    }
+  }
+}
+
+.loading {
+  text-align: center;
+  padding: 60px;
+  font-size: 18px;
+  color: #666;
+  
+  &:after {
+    content: '...';
+    animation: dots 1.5s steps(5, end) infinite;
+  }
+}
+
+@keyframes dots {
+  0%, 20% { content: '.'; }
+  40% { content: '..'; }
+  60%, 100% { content: '...'; }
+}
+
+// Button styles
+.btn {
+  display: inline-block;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.2s;
+  
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  }
+  
+  &.btn-primary {
+    background-color: $primary-color;
+    color: white;
+    
+    &:hover {
+      background-color: darken($primary-color, 10%);
+    }
+  }
+  
+  &.btn-secondary {
+    background-color: #6c757d;
+    color: white;
+    
+    &:hover {
+      background-color: #5a6268;
+    }
+  }
+  
+  &.btn-danger {
+    background-color: #dc3545;
+    color: white;
+    
+    &:hover {
+      background-color: #c82333;
+    }
+  }
+  
+  &.btn-warning {
+    background-color: #ffc107;
+    color: #212529;
+    
+    &:hover {
+      background-color: #e0a800;
+    }
+  }
+  
+  &.btn-success {
+    background-color: #28a745;
+    color: white;
+    
+    &:hover {
+      background-color: #218838;
+    }
+  }
+  
+  &.btn-info {
+    background-color: #17a2b8;
+    color: white;
+    
+    &:hover {
+      background-color: #138496;
+    }
+  }
+}
+
+// Responsive design
+@media (max-width: 992px) {
+  .doctors-page {
+    .doctor-card {
+      flex-direction: column;
+      
+      .doctor-info {
+        border-right: none;
+        border-bottom: 1px solid #f0f0f0;
+      }
+      
+      .doctor-actions {
+        flex-direction: row;
+        flex-wrap: wrap;
+        min-width: auto;
+        
+        button {
+          flex: 1;
+          min-width: 120px;
+        }
+      }
+    }
+  }
+}
+
+@media (max-width: 768px) {
+  .doctors-page {
+    padding: 15px;
+
+    .page-header {
+      flex-direction: column;
+      gap: 15px;
+      align-items: stretch;
+
+      h1 {
+        text-align: center;
+        font-size: 24px;
+      }
+    }
+
+    .doctor-form-overlay .doctor-form {
+      width: 95%;
+      padding: 20px;
+      margin: 20px;
+    }
+    
+    .queue-info {
+      .queue-stats {
+        flex-direction: column;
+        gap: 10px !important;
+        
+        .stat {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          
+          .value {
+            font-size: 20px !important;
+          }
+        }
+      }
+    }
+  }
+}
+
+@media (max-width: 576px) {
+  .doctors-page {
+    .doctor-actions {
+      flex-direction: column !important;
+      
+      button {
+        width: 100% !important;
+      }
+    }
+    
+    .form-actions {
+      flex-direction: column;
+      
+      button {
+        width: 100%;
+      }
+    }
+  }
+}

@@ -1,7 +1,9 @@
-// lib/fronted/res/components/wigets/searchbutton.dart - Updated
+// lib/fronted/res/components/wigets/searchbutton.dart - Updated with Theme Support
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:qatar_app/fronted/res/components/wigets/searchflutter.dart';
+import '../../../../providers/theme_provider.dart';
 import 'colors.dart';
 
 class Searchbutton extends StatelessWidget {
@@ -9,6 +11,8 @@ class Searchbutton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isDarkMode = themeProvider.isDarkMode;
     final width = MediaQuery.sizeOf(context).width;
     final height = MediaQuery.sizeOf(context).height;
 
@@ -21,11 +25,11 @@ class Searchbutton extends StatelessWidget {
         width: double.infinity,
         height: 60,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: isDarkMode ? AppColors.darkCard : Colors.white,
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.1),
+              color: Colors.black.withOpacity(isDarkMode ? 0.1 : 0.08),
               blurRadius: 8,
               offset: const Offset(0, 2),
             ),
@@ -38,18 +42,16 @@ class Searchbutton extends StatelessWidget {
         child: Row(
           children: [
             const SizedBox(width: 16),
-            Icon(
-              Icons.search,
-              size: 24,
-              color: colors().bluecolor1,
-            ),
+            Icon(Icons.search, size: 24, color: colors().bluecolor1),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 "Search clinics, specialties, locations...",
                 style: TextStyle(
                   fontSize: 16,
-                  color: Colors.grey.shade600,
+                  color: isDarkMode
+                      ? AppColors.darkSubtext
+                      : Colors.grey.shade600,
                 ),
                 overflow: TextOverflow.ellipsis,
               ),

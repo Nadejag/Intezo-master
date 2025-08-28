@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:qatar_app/fronted/view/bottom_navigator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/clinic_provider.dart';
+import '../../providers/theme_provider.dart';
 import '../../services/api_service.dart';
 import '../../services/clinic_service.dart';
 import '../../services/event_bus.dart';
@@ -21,8 +22,9 @@ class _StatusState extends State<Status> {
   bool _isLoading = true;
   String? _error;
   Map<String, dynamic>? _queueData;
-  List<dynamic> _bookingHistory = [];
+
   StreamSubscription? _queueUpdateSubscription;
+  StreamSubscription? _patientServedSubscription;
   ClinicProvider? _clinicProvider;
 
   @override
@@ -37,66 +39,60 @@ class _StatusState extends State<Status> {
 
   Future<void> _loadData() async {
     await _loadCurrentQueueStatus();
-    await _loadBookingHistory();
     _setupRealTimeUpdates();
-  }
-
-  Future<void> _loadBookingHistory() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final patientId = prefs.getString('patientId');
-
-      if (patientId != null) {
-        // Use the correct endpoint for booking history
-        final response = await ApiService.get('patients/$patientId/history');
-
-        if (response != null && response is List) {
-          setState(() {
-            _bookingHistory = List<dynamic>.from(response);
-          });
-        } else {
-          // If no history from API, show empty list instead of error
-          setState(() {
-            _bookingHistory = [];
-          });
-        }
-      }
-    } catch (e) {
-      print('Error loading booking history: $e');
-      // Even if there's an error, set empty history to avoid UI issues
-      setState(() {
-        _bookingHistory = [];
-      });
-    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+    final isDarkMode = themeProvider.isDarkMode;
+
     return Scaffold(
-      backgroundColor: colors.bgColor,
+      backgroundColor: isDarkMode
+          ? AppColors.darkBackground
+          : AppColors.lightBackground,
       appBar: AppBar(
-        backgroundColor: Colors.white,
-        title: const Text("Queue Status"),
+        backgroundColor: isDarkMode ? AppColors.darkCard : Colors.white,
+        title: Text(
+          "Queue Status",
+          style: TextStyle(
+            color: isDarkMode ? AppColors.darkText : AppColors.lightText,
+          ),
+        ),
+        foregroundColor: isDarkMode ? AppColors.darkText : AppColors.lightText,
+        elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: Icon(
+              Icons.refresh,
+              color: isDarkMode ? Colors.white70 : Colors.black54,
+            ),
             onPressed: () {
               _loadCurrentQueueStatus();
-              _loadBookingHistory();
             },
           ),
         ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : _buildMainContent(),
+          : _buildMainContent(isDarkMode),
     );
   }
 
-  Widget _buildMainContent() {
+  Widget _buildMainContent(bool isDarkMode) {
     if (_error != null) {
-      return _buildErrorState();
+      return _buildErrorState(isDarkMode);
     }
+
+    // Check if we have an active booking (not null, not error, and not served)
+    final hasActiveBooking =
+        _queueData != null &&
+        _queueData!['currentQueue'] != null &&
+        _queueData!['error'] == null &&
+        _queueData!['currentQueue']['status'] != 'served';
+
+    print('Queue data status: ${_queueData?['currentQueue']?['status']}');
+    print('Has active booking: $hasActiveBooking');
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16.0),
@@ -104,18 +100,10 @@ class _StatusState extends State<Status> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Current queue status (if available)
-          if (_queueData != null && _queueData!['currentQueue'] != null)
-            _buildCurrentQueueCard(_queueData!['currentQueue']),
-
-          if (_queueData != null && _queueData!['currentQueue'] != null)
-            const SizedBox(height: 24),
-
-          // Always show booking history section
-          _buildBookingHistorySection(),
-
-          // Show encouragement to book if no current queue
-          if (_queueData == null || _queueData!['currentQueue'] == null)
-            _buildNoQueueEncouragement(),
+          if (hasActiveBooking)
+            _buildCurrentQueueCard(_queueData!['currentQueue'], isDarkMode)
+          else
+            _buildNoQueueEncouragement(isDarkMode),
         ],
       ),
     );
@@ -123,44 +111,107 @@ class _StatusState extends State<Status> {
 
   void _setupRealTimeUpdates() {
     _queueUpdateSubscription = EventBus().onQueueUpdate.listen((event) {
-      print('Real-time queue update received in Status screen');
-      if (_queueData != null && _queueData!['currentQueue'] != null) {
-        setState(() {
-          _queueData!['currentQueue']['currentServing'] = event.queueData['currentNumber'];
+      print('🔥 Real-time event received in Status screen: ${event.queueData}');
 
-          final queueNumber = _queueData!['currentQueue']['number'];
-          final currentServing = event.queueData['currentNumber'];
-          final positionInQueue = queueNumber - currentServing;
-          final estimatedWait = positionInQueue > 0 ? positionInQueue * 5 : 0;
-
-          _queueData!['currentQueue']['positionInQueue'] = positionInQueue;
-          _queueData!['currentQueue']['estimatedWait'] = estimatedWait;
-        });
+      // Show a snackbar to indicate real-time update received
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Real-time update received!'),
+            duration: Duration(seconds: 1),
+            backgroundColor: Colors.green,
+          ),
+        );
       }
+
+      // Always reload status when any event is received
+      _loadCurrentQueueStatus();
     });
+
+    // Listen for patient served events
+    // _patientServedSubscription = EventBus().onPatientServed.listen((event) {
+    //   if (mounted) {
+    //     ScaffoldMessenger.of(context).showSnackBar(
+    //       SnackBar(
+    //         content: Text('You have been served! Updating booking history...'),
+    //         duration: Duration(seconds: 3),
+    //         backgroundColor: Colors.green,
+    //       ),
+    //     );
+    //     _loadBookingHistory(); // Refresh booking history
+    //     _loadCurrentQueueStatus(); // Clear current queue
+    //   }
+    // });
   }
 
   Future<void> _loadCurrentQueueStatus() async {
     try {
-      setState(() {
-        _isLoading = true;
-        _error = null;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = true;
+          _error = null;
+        });
+      }
 
-      final clinicProvider = Provider.of<ClinicProvider>(context, listen: false);
+      final clinicProvider = Provider.of<ClinicProvider>(
+        context,
+        listen: false,
+      );
       final queueData = await clinicProvider.getPatientCurrentQueue();
 
-      if (queueData != null && queueData['currentQueue'] != null) {
+      print('Queue status response: $queueData');
+
+      // Check if we have queue data
+      if (queueData != null &&
+          queueData['currentQueue'] != null &&
+          queueData['error'] == null) {
+        final status = queueData['currentQueue']['status'];
+        print('Current booking status: $status');
+
+        // Check if patient was served - if so, clear the booking
+        if (status == 'served') {
+          print('Patient was served, clearing booking');
+          setState(() {
+            _queueData = null;
+          });
+
+          // Show served message
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'You have been served! You can now book a new appointment.',
+                ),
+                backgroundColor: Colors.green,
+                duration: Duration(seconds: 3),
+              ),
+            );
+          }
+
+          // Stop listening for updates
+          clinicProvider.stopListeningForUpdates();
+        } else {
+          // Active booking - show it
+          print('Active booking found with status: $status');
+          setState(() {
+            _queueData = queueData;
+          });
+
+          final clinicId = queueData['currentQueue']['clinic']['_id'];
+          final doctorId = queueData['currentQueue']['doctor']?['_id'];
+
+          // Start listening for updates with doctor-specific channel (optimized)
+          clinicProvider.startListeningForUpdates(clinicId, doctorId: doctorId);
+        }
+      } else {
+        // No active booking - clear the data
+        print('No queue data found, clearing booking');
         setState(() {
-          _queueData = queueData;
+          _queueData = null;
         });
 
-        final clinicId = queueData['currentQueue']['clinic']['_id'];
-        clinicProvider.startListeningForUpdates(clinicId);
-      } else {
-        setState(() {
-          _queueData = null; // Ensure queueData is null when no active queue
-        });
+        // Stop listening for updates since there's no active booking
+        clinicProvider.stopListeningForUpdates();
       }
     } catch (e) {
       setState(() {
@@ -176,7 +227,13 @@ class _StatusState extends State<Status> {
   @override
   void dispose() {
     _queueUpdateSubscription?.cancel();
-    _clinicProvider?.stopListeningForUpdates();
+    _patientServedSubscription?.cancel();
+
+    // Stop listening for updates when screen is disposed
+    if (_clinicProvider != null) {
+      _clinicProvider!.stopListeningForUpdates();
+    }
+
     super.dispose();
   }
 
@@ -186,7 +243,7 @@ class _StatusState extends State<Status> {
     _clinicProvider = Provider.of<ClinicProvider>(context, listen: false);
   }
 
-  Widget _buildErrorState() {
+  Widget _buildErrorState(bool isDarkMode) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -195,12 +252,19 @@ class _StatusState extends State<Status> {
           const SizedBox(height: 16),
           Text(
             _error!,
-            style: const TextStyle(fontSize: 16),
+            style: TextStyle(
+              fontSize: 16,
+              color: isDarkMode ? AppColors.darkText : AppColors.lightText,
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 20),
           ElevatedButton(
             onPressed: _loadData,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: colors().bluecolor1,
+              foregroundColor: Colors.white,
+            ),
             child: const Text('Try Again'),
           ),
         ],
@@ -208,23 +272,28 @@ class _StatusState extends State<Status> {
     );
   }
 
-  Widget _buildNoQueueEncouragement() {
+  Widget _buildNoQueueEncouragement(bool isDarkMode) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       margin: const EdgeInsets.only(top: 16),
       decoration: BoxDecoration(
-        color: Colors.grey.shade50,
+        color: isDarkMode ? AppColors.darkCard : Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(
+          color: isDarkMode ? Colors.grey.shade700 : Colors.grey.shade200,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDarkMode ? 0.1 : 0.08),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         children: [
-          Icon(
-            Icons.calendar_today,
-            size: 48,
-            color: colors().bluecolor1,
-          ),
+          Icon(Icons.calendar_today, size: 48, color: colors().bluecolor1),
           const SizedBox(height: 16),
           Text(
             'No Active Booking',
@@ -237,7 +306,9 @@ class _StatusState extends State<Status> {
           const SizedBox(height: 8),
           Text(
             'Book an appointment to see your queue status here',
-            style: TextStyle(color: Colors.grey.shade600),
+            style: TextStyle(
+              color: isDarkMode ? AppColors.darkSubtext : Colors.grey.shade600,
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 20),
@@ -259,7 +330,7 @@ class _StatusState extends State<Status> {
     );
   }
 
-  Widget _buildCurrentQueueCard(dynamic queueData) {
+  Widget _buildCurrentQueueCard(dynamic queueData, bool isDarkMode) {
     final queueNumber = queueData['number'] ?? 'N/A';
     final currentServing = queueData['currentServing'] ?? 0;
     final positionInQueue = (queueNumber is int && currentServing is int)
@@ -268,11 +339,13 @@ class _StatusState extends State<Status> {
     final estimatedWait = positionInQueue > 0 ? positionInQueue * 5 : 0;
     final queueId = queueData['_id'];
     final clinicName = queueData['clinic']?['name'] ?? 'Unknown Clinic';
+    final doctorName = queueData['doctor']?['name'] ?? 'Unknown Doctor';
+    final doctorSpecialty = queueData['doctor']?['specialty'] ?? '';
 
     return Card(
       elevation: 3,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      color: Colors.white,
+      color: isDarkMode ? AppColors.darkCard : Colors.white,
       child: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
@@ -290,9 +363,42 @@ class _StatusState extends State<Status> {
               clinicName,
               style: TextStyle(
                 fontSize: 16,
-                color: Colors.grey.shade600,
+                color: isDarkMode
+                    ? AppColors.darkSubtext
+                    : Colors.grey.shade600,
               ),
             ),
+            if (doctorName.isNotEmpty)
+              Column(
+                children: [
+                  const SizedBox(height: 4),
+                  Text(
+                    'Dr. $doctorName',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: isDarkMode
+                          ? AppColors.darkSubtext
+                          : Colors.grey.shade600,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            if (doctorSpecialty.isNotEmpty)
+              Column(
+                children: [
+                  const SizedBox(height: 2),
+                  Text(
+                    doctorSpecialty,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isDarkMode
+                          ? AppColors.darkSubtext
+                          : Colors.grey.shade500,
+                    ),
+                  ),
+                ],
+              ),
             const SizedBox(height: 16),
             Text(
               '$queueNumber',
@@ -303,17 +409,49 @@ class _StatusState extends State<Status> {
               ),
             ),
             const SizedBox(height: 16),
-            _buildStatusRow('Currently Serving:', '$currentServing', Colors.blue.shade800),
-            _buildStatusRow('Your Position:', positionInQueue > 0 ? '$positionInQueue' : 'Being served',
-                positionInQueue > 0 ? Colors.orange.shade700 : Colors.green.shade700),
-            _buildStatusRow('Estimated Wait:', positionInQueue > 0 ? '$estimatedWait minutes' : '0 minutes',
-                positionInQueue > 0 ? Colors.orange.shade700 : Colors.green.shade700),
+            _buildStatusRow(
+              'Currently Serving:',
+              '$currentServing',
+              Colors.blue.shade800,
+              isDarkMode,
+            ),
+            _buildStatusRow(
+              'Your Position:',
+              positionInQueue > 0 ? '$positionInQueue' : 'Being served',
+              positionInQueue > 0
+                  ? Colors.orange.shade700
+                  : Colors.green.shade700,
+              isDarkMode,
+            ),
+            _buildStatusRow(
+              'Estimated Wait:',
+              positionInQueue > 0 ? '$estimatedWait minutes' : '0 minutes',
+              positionInQueue > 0
+                  ? Colors.orange.shade700
+                  : Colors.green.shade700,
+              isDarkMode,
+            ),
             const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: _loadCurrentQueueStatus,
+                    onPressed: () {
+                      _loadCurrentQueueStatus();
+                      // Test Pusher connection
+                      final clinicProvider = Provider.of<ClinicProvider>(
+                        context,
+                        listen: false,
+                      );
+                      final clinicId =
+                          _queueData!['currentQueue']['clinic']['_id'];
+                      final doctorId =
+                          _queueData!['currentQueue']['doctor']?['_id'];
+                      clinicProvider.startListeningForUpdates(
+                        clinicId,
+                        doctorId: doctorId,
+                      );
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: colors().bluecolor1,
                       foregroundColor: Colors.white,
@@ -354,127 +492,32 @@ class _StatusState extends State<Status> {
     );
   }
 
-  Widget _buildBookingHistorySection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Booking History',
-          style: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey.shade800,
-          ),
-        ),
-        const SizedBox(height: 12),
-        _bookingHistory.isEmpty
-            ? Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.grey.shade50,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.shade200),
-          ),
-          child: Column(
-            children: [
-              Icon(
-                Icons.history,
-                size: 40,
-                color: Colors.grey.shade400,
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'No past bookings yet',
-                style: TextStyle(
-                  color: Colors.grey.shade600,
-                ),
-              ),
-            ],
-          ),
-        )
-            : ListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: _bookingHistory.length,
-          itemBuilder: (context, index) {
-            final booking = _bookingHistory[index];
-            return _buildHistoryItem(booking);
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildHistoryItem(dynamic booking) {
-    final isServed = booking['status'] == 'served';
-    final clinicName = booking['clinic']?['name'] ?? 'Unknown Clinic';
-    final queueNumber = booking['number'] ?? 'N/A';
-    final date = _formatDate(booking['servedAt'] ?? booking['bookedAt'] ?? '');
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: ListTile(
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: isServed ? Colors.green.shade50 : Colors.orange.shade50,
-            shape: BoxShape.circle,
-          ),
-          child: Icon(
-            isServed ? Icons.check_circle : Icons.pending,
-            color: isServed ? Colors.green : Colors.orange,
-          ),
-        ),
-        title: Text(
-          'Queue #$queueNumber - $clinicName',
-          style: const TextStyle(fontWeight: FontWeight.w500),
-        ),
-        subtitle: Text(
-          'Status: ${booking['status']?.toString().toUpperCase() ?? 'UNKNOWN'}',
-          style: TextStyle(
-            color: isServed ? Colors.green.shade700 : Colors.orange.shade700,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        trailing: Text(
-          date,
-          style: TextStyle(
-            color: Colors.grey.shade600,
-            fontSize: 12,
-          ),
-        ),
-      ),
-    );
-  }
-
-  String _formatDate(String dateString) {
-    try {
-      if (dateString.isEmpty) return 'Unknown date';
-
-      final date = DateTime.parse(dateString);
-      return '${date.day}/${date.month}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
-    } catch (e) {
-      return 'Unknown date';
-    }
-  }
-
-  Widget _buildStatusRow(String label, String value, Color? valueColor) {
+  Widget _buildStatusRow(
+    String label,
+    String value,
+    Color? valueColor,
+    bool isDarkMode,
+  ) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6.0),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(
-            fontWeight: FontWeight.w500,
-            color: Colors.grey.shade700,
-          )),
-          Text(value, style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: valueColor,
-          )),
+          Text(
+            label,
+            style: TextStyle(
+              fontWeight: FontWeight.w500,
+              color: isDarkMode ? AppColors.darkSubtext : Colors.grey.shade700,
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: valueColor,
+            ),
+          ),
         ],
       ),
     );
@@ -485,13 +528,36 @@ class _StatusState extends State<Status> {
     bool confirmCancel = await showDialog(
       context: context,
       builder: (BuildContext context) {
+        final themeProvider = Provider.of<ThemeProvider>(context);
+        final isDarkMode = themeProvider.isDarkMode;
+
         return AlertDialog(
-          title: const Text("Confirm Cancellation"),
-          content: const Text("Are you sure you want to cancel this booking?"),
+          backgroundColor: isDarkMode ? AppColors.darkCard : Colors.white,
+          title: Text(
+            "Confirm Cancellation",
+            style: TextStyle(
+              color: isDarkMode ? AppColors.darkText : AppColors.lightText,
+            ),
+          ),
+          content: Text(
+            "Are you sure you want to cancel this booking?",
+            style: TextStyle(
+              color: isDarkMode
+                  ? AppColors.darkSubtext
+                  : AppColors.lightSubtext,
+            ),
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text("No"),
+              child: Text(
+                "No",
+                style: TextStyle(
+                  color: isDarkMode
+                      ? AppColors.darkSubtext
+                      : AppColors.lightSubtext,
+                ),
+              ),
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(true),
@@ -516,16 +582,21 @@ class _StatusState extends State<Status> {
           const SnackBar(content: Text('Booking cancelled successfully')),
         );
 
+        // Stop listening for updates since booking is cancelled
+        final clinicProvider = Provider.of<ClinicProvider>(
+          context,
+          listen: false,
+        );
+        clinicProvider.stopListeningForUpdates();
+
         // Reload data after successful cancellation
         await _loadCurrentQueueStatus();
-        await _loadBookingHistory();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Failed to cancel booking')),
         );
       }
     } catch (e) {
-      // More specific error handling
       String errorMessage = 'Failed to cancel booking';
       if (e.toString().contains('404')) {
         errorMessage = 'Booking not found or already processed';
@@ -533,15 +604,40 @@ class _StatusState extends State<Status> {
         errorMessage = 'Cannot cancel already processed booking';
       } else if (e.toString().contains('401') || e.toString().contains('403')) {
         errorMessage = 'Authentication error - please login again';
+      } else if (e.toString().contains('Doctor not available')) {
+        errorMessage = 'Cannot cancel - doctor is not available';
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(errorMessage)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(errorMessage)));
     } finally {
       setState(() {
         _isLoading = false;
       });
+    }
+  }
+
+  // Add this method to handle doctor-specific real-time data
+  void _handleDoctorSpecificUpdate(QueueUpdateEvent event) {
+    if (_queueData != null && _queueData!['currentQueue'] != null) {
+      final currentDoctorId = _queueData!['currentQueue']['doctor']?['_id'];
+
+      // Only process updates for the specific doctor or general clinic updates
+      if (event.doctorId == null || event.doctorId == currentDoctorId) {
+        setState(() {
+          _queueData!['currentQueue']['currentServing'] =
+              event.queueData['currentNumber'];
+
+          final queueNumber = _queueData!['currentQueue']['number'];
+          final currentServing = event.queueData['currentNumber'];
+          final positionInQueue = queueNumber - currentServing;
+          final estimatedWait = positionInQueue > 0 ? positionInQueue * 5 : 0;
+
+          _queueData!['currentQueue']['positionInQueue'] = positionInQueue;
+          _queueData!['currentQueue']['estimatedWait'] = estimatedWait;
+        });
+      }
     }
   }
 }

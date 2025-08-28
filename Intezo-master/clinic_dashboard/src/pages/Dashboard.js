@@ -1,15 +1,19 @@
-// Dashboard.js - Improved version with responsive design and collapsible sidebar
+// Dashboard.js - Updated for doctor-specific queues
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getQueueDashboard, updateCurrentNumber } from '../api/clinicApi';
+import { 
+  getDoctors, 
+  getDoctorQueue, 
+  callNextPatient, 
+  toggleClinicStatus, 
+  getClinicStatus, 
+  getPublicDoctorQueue
+} from '../api/clinicApi';
 import { usePusher } from '../context/PusherContext';
-// import Sidebar from '../components/Layout/Sidebar';
 import CurrentQueue from '../components/Dashboard/CurrentQueue';
 import UpcomingPatients from '../components/Dashboard/UpcomingPatients';
 import QueueStats from '../components/Dashboard/QueueStats';
 import '../styles/Dashboard.scss';
-import { toggleClinicStatus, getClinicStatus } from '../api/clinicApi';
-// import 'dotenv/config'; // Ensure you have dotenv installed and configured
 
 const Dashboard = () => {
   const { currentUser } = useAuth();
@@ -18,6 +22,12 @@ const Dashboard = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
+  
+  // State for doctors list and selected doctor
+  const [doctors, setDoctors] = useState([]);
+  const [selectedDoctor, setSelectedDoctor] = useState(null);
+  
+  // Queue data state
   const [queueData, setQueueData] = useState({
     current: 0,
     upcoming: [],
@@ -27,6 +37,7 @@ const Dashboard = () => {
     completedToday: 0,
     peakWaitTime: 0
   });
+  
   const [upcomingPage, setUpcomingPage] = useState(1);
   const [itemsPerPage] = useState(8);
 
@@ -38,7 +49,25 @@ const Dashboard = () => {
   });
   const [statusLoading, setStatusLoading] = useState(false);
 
-  // Add function to fetch clinic status
+  // Load doctors list
+  const fetchDoctors = async () => {
+    try {
+      const response = await getDoctors();
+      const doctorsList = response.data;
+      setDoctors(doctorsList);
+      
+      // Auto-select first available doctor or first doctor
+      if (doctorsList.length > 0) {
+        const availableDoctor = doctorsList.find(d => d.isAvailable) || doctorsList[0];
+        setSelectedDoctor(availableDoctor);
+      }
+    } catch (err) {
+      console.error('Error fetching doctors:', err);
+      setError('Failed to load doctors list');
+    }
+  };
+
+  // Fetch clinic status
   const fetchClinicStatus = async () => {
     try {
       const response = await getClinicStatus();
@@ -48,7 +77,38 @@ const Dashboard = () => {
     }
   };
 
-  // Add function to toggle clinic status
+  // Fetch queue data for selected doctor
+  const fetchQueueData = async (isRefresh = false) => {
+    if (!selectedDoctor) return;
+    
+    if (isRefresh) setRefreshing(true);
+
+    try {
+      const response = await getPublicDoctorQueue(currentUser.clinic._id, selectedDoctor._id);
+      const data = response.data;
+      
+      setQueueData({
+        current: data.current || 0,
+        upcoming: data.upcoming || [],
+        totalWaiting: data.totalWaiting || 0,
+        avgWaitTime: data.avgWaitTime || 0,
+        canCallNext: data.canCallNext !== undefined ? data.canCallNext : (data.upcoming?.length > 0),
+        completedToday: data.completedToday || 0,
+        peakWaitTime: data.peakWaitTime || 0
+      });
+      setLastUpdated(new Date());
+      setUpcomingPage(1);
+      setError('');
+    } catch (err) {
+      console.error('Dashboard error:', err);
+      setError(err.response?.data?.error || 'Failed to load queue data');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  // Toggle clinic status
   const handleToggleStatus = async () => {
     setStatusLoading(true);
     try {
@@ -58,6 +118,7 @@ const Dashboard = () => {
         isOpen: response.data.isOpen,
         lastStatusChange: new Date()
       }));
+      // Refresh queue data after status change
       fetchQueueData(true);
     } catch (err) {
       console.error('Error toggling clinic status:', err);
@@ -67,43 +128,24 @@ const Dashboard = () => {
     }
   };
 
-  // Call fetchClinicStatus in useEffect
-  useEffect(() => {
-    if (currentUser?.clinic?._id) {
-      fetchQueueData();
-      fetchClinicStatus(); // Add this
-    }
-  }, [currentUser]);
-
-  // Memoized paginated upcoming patients
-  const paginatedUpcoming = useMemo(() => {
-    const startIndex = (upcomingPage - 1) * itemsPerPage;
-    return queueData.upcoming.slice(startIndex, startIndex + itemsPerPage);
-  }, [queueData.upcoming, upcomingPage, itemsPerPage]);
-
-  const fetchQueueData = async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
+  // Call next patient for selected doctor
+  const handleNextPatient = async () => {
+    if (!queueData.canCallNext || !selectedDoctor) return;
 
     try {
-      const { data } = await getQueueDashboard(currentUser.clinic._id);
-      setQueueData({
-        current: data.current || 0,
-        upcoming: data.upcoming || [],
-        totalWaiting: data.totalWaiting || 0,
-        avgWaitTime: data.avgWaitTime || 0,
-        canCallNext: data.upcoming?.length > 0,
-        completedToday: data.completedToday || 0,
-        peakWaitTime: data.peakWaitTime || 0
-      });
+      const response = await callNextPatient(selectedDoctor._id);
+      
+      setQueueData(prev => ({
+        ...prev,
+        current: response.data.currentNumber,
+        completedToday: prev.completedToday + (response.data.totalServed || 1),
+        canCallNext: response.data.hasNextPatient
+      }));
       setLastUpdated(new Date());
-      setUpcomingPage(1);
-      setError('');
     } catch (err) {
-      console.error('Dashboard error:', err);
-      setError(err.response?.data?.error || 'Failed to load dashboard');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+      setError(err.response?.data?.error || 'Failed to update queue');
+      // Refresh queue data to get current state
+      fetchQueueData();
     }
   };
 
@@ -111,56 +153,55 @@ const Dashboard = () => {
     fetchQueueData(true);
   };
 
-  // In Dashboard.js - Update the handleNextPatient function
-const handleNextPatient = async () => {
-  if (!queueData.canCallNext) return;
-
-  try {
-    const response = await updateCurrentNumber(currentUser.clinic._id);
-
-    setQueueData(prev => ({
-      ...prev,
-      current: response.data.currentNumber,
-      completedToday: prev.completedToday + response.data.served,
-      canCallNext: response.data.hasNextPatient
-    }));
-    setLastUpdated(new Date());
-  } catch (err) {
-    setError(err.response?.data?.error || 'Failed to update queue');
-    fetchQueueData();
-  }
-};
-
   const handlePageChange = (newPage) => {
     setUpcomingPage(newPage);
   };
 
+  const handleDoctorChange = (doctor) => {
+    setSelectedDoctor(doctor);
+  };
+
+  // Memoized paginated upcoming patients
+  const paginatedUpcoming = useMemo(() => {
+    const startIndex = (upcomingPage - 1) * itemsPerPage;
+    return queueData.upcoming.slice(startIndex, startIndex + itemsPerPage);
+  }, [queueData.upcoming, upcomingPage, itemsPerPage]);
+
+  // Initial data loading
   useEffect(() => {
     if (currentUser?.clinic?._id) {
-      fetchQueueData();
+      fetchDoctors();
+      fetchClinicStatus();
     }
   }, [currentUser]);
 
-  // In Dashboard.js
+  // Load queue data when selected doctor changes
+  useEffect(() => {
+    if (selectedDoctor) {
+      fetchQueueData();
+    }
+  }, [selectedDoctor]);
+
+  // Clinic status check interval
   useEffect(() => {
     const interval = setInterval(() => {
       fetchClinicStatus();
-    }, 30000); // Check every 30 seconds
+    }, 30000);
 
     return () => clearInterval(interval);
   }, []);
 
+  // Pusher subscription for real-time updates
   useEffect(() => {
-    if (!pusher || !currentUser?.clinic?._id) return;
+    if (!pusher || !currentUser?.clinic?._id || !selectedDoctor) return;
 
-    const channelName = `presence-clinic-${currentUser.clinic._id}`;
-    console.log('Subscribing to channel:', channelName);
+    const channelName = `presence-doctor-${selectedDoctor._id}`;
+    console.log('Subscribing to doctor channel:', channelName);
 
     const channel = pusher.subscribe(channelName);
 
     channel.bind('pusher:subscription_succeeded', () => {
-      console.log('✅ Subscribed to', channelName);
-      fetchQueueData();
+      console.log('✅ Subscribed to doctor channel:', channelName);
     });
 
     channel.bind('pusher:subscription_error', (status) => {
@@ -168,30 +209,30 @@ const handleNextPatient = async () => {
     });
 
     channel.bind('queue-update', (data) => {
-  console.log('📢 Real-time update received:', data);
-  setQueueData(prev => ({
-    ...prev,
-    current: data.currentNumber || prev.current,
-    upcoming: data.upcoming || prev.upcoming,
-    totalWaiting: data.totalWaiting || prev.totalWaiting,
-    avgWaitTime: data.avgWaitTime || prev.avgWaitTime,
-    canCallNext: data.hasNextPatient !== undefined ? data.hasNextPatient : prev.canCallNext
-  }));
-  setLastUpdated(new Date());
-});
+      console.log('📢 Doctor queue update received:', data);
+      setQueueData(prev => ({
+        ...prev,
+        current: data.currentNumber || prev.current,
+        upcoming: data.upcoming || prev.upcoming,
+        totalWaiting: data.totalWaiting || prev.totalWaiting,
+        avgWaitTime: data.avgWaitTime || prev.avgWaitTime,
+        canCallNext: data.hasNextPatient !== undefined ? data.hasNextPatient : prev.canCallNext
+      }));
+      setLastUpdated(new Date());
+    });
 
     return () => {
       channel.unbind_all();
       pusher.unsubscribe(channelName);
     };
-  }, [pusher, currentUser?.clinic?._id]);
+  }, [pusher, currentUser?.clinic?._id, selectedDoctor]);
 
   if (loading) return (
     <div className="dashboard-container">
       <div className="dashboard-content">
         <div className="loading-state">
           <div className="spinner"></div>
-          <p>Loading queue data...</p>
+          <p>Loading dashboard...</p>
         </div>
       </div>
     </div>
@@ -234,6 +275,7 @@ const handleNextPatient = async () => {
                 </div>
               )}
             </div>
+            
             <div className="data-freshness">
               <span className="status-indicator live"></span>
               <span>Updated: {lastUpdated ? lastUpdated.toLocaleTimeString() : '--:--:--'}</span>
@@ -252,47 +294,93 @@ const handleNextPatient = async () => {
           </div>
         </div>
 
+        {/* Doctor Selection */}
+        {doctors.length > 0 && (
+          <div className="doctor-selection">
+            <h3>Select Doctor</h3>
+            <div className="doctor-buttons">
+              {doctors.map(doctor => (
+                <button
+                  key={doctor._id}
+                  className={`doctor-btn ${selectedDoctor?._id === doctor._id ? 'active' : ''} ${
+                    !doctor.isAvailable ? 'unavailable' : ''
+                  }`}
+                  onClick={() => handleDoctorChange(doctor)}
+                  disabled={!doctor.isActive}
+                >
+                  <span className="doctor-name">{doctor.name}</span>
+                  <span className="doctor-status">
+                    {doctor.isAvailable ? 'Available' : 'Unavailable'}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="alert error">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-              <path d="M12 8V12M12 16H12.01M21 12C21 极 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M12 8V12M12 16H12.01M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             <span>{error}</span>
           </div>
         )}
 
-        <div className="dashboard-grid">
-          <div className="top-row">
-            <div className="current-queue-container">
-              <CurrentQueue
-                currentNumber={queueData.current}
-                onNext={handleNextPatient}
-                canCallNext={queueData.canCallNext}
-                totalWaiting={queueData.totalWaiting}
-              />
+        {selectedDoctor && (
+          <>
+            <div className="selected-doctor-info">
+              <h2>Dr. {selectedDoctor.name}</h2>
+              <p className="doctor-specialty">{selectedDoctor.specialty}</p>
+              <div className={`availability-status ${selectedDoctor.isAvailable ? 'available' : 'unavailable'}`}>
+                {selectedDoctor.isAvailable ? 'Available' : 'Currently Unavailable'}
+              </div>
             </div>
 
-            <div className="queue-stats-container">
-              <QueueStats
-                totalPatients={queueData.totalWaiting}
-                avgWaitTime={queueData.avgWaitTime}
-                upcomingCount={queueData.upcoming.length}
-                currentNumber={queueData.current}
-                completedToday={queueData.completedToday}
-              />
-            </div>
-          </div>
+            <div className="dashboard-grid">
+              <div className="top-row">
+                <div className="current-queue-container">
+                  <CurrentQueue
+                    currentNumber={queueData.current}
+                    onNext={handleNextPatient}
+                    canCallNext={queueData.canCallNext && selectedDoctor.isAvailable}
+                    totalWaiting={queueData.totalWaiting}
+                    doctorName={selectedDoctor.name}
+                  />
+                </div>
 
-          <div className="bottom-row">
-            <UpcomingPatients
-              patients={paginatedUpcoming}
-              totalPatients={queueData.upcoming.length}
-              currentPage={upcomingPage}
-              itemsPerPage={itemsPerPage}
-              onPageChange={handlePageChange}
-            />
+                <div className="queue-stats-container">
+                  <QueueStats
+                    totalPatients={queueData.totalWaiting}
+                    avgWaitTime={queueData.avgWaitTime}
+                    upcomingCount={queueData.upcoming.length}
+                    currentNumber={queueData.current}
+                    completedToday={queueData.completedToday}
+                    doctor={selectedDoctor}
+                  />
+                </div>
+              </div>
+
+              <div className="bottom-row">
+                <UpcomingPatients
+                  patients={paginatedUpcoming}
+                  totalPatients={queueData.upcoming.length}
+                  currentPage={upcomingPage}
+                  itemsPerPage={itemsPerPage}
+                  onPageChange={handlePageChange}
+                  doctor={selectedDoctor}
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {!selectedDoctor && doctors.length === 0 && (
+          <div className="no-doctors">
+            <h3>No doctors available</h3>
+            <p>Please add doctors to your clinic to start managing queues.</p>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

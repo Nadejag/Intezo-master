@@ -131,11 +131,14 @@ export const cancelBooking = async (req, res) => {
   }
 };
 
-// Add to patientController.js
-// In patientController.js - Update registerPatientAndAddToQueue function
+// Update registerPatientAndAddToQueue for doctor-specific booking
 export const registerPatientAndAddToQueue = async (req, res) => {
   try {
-    const { name, phone, clinicId } = req.body;
+    const { name, phone, clinicId, doctorId } = req.body;
+
+     if (!doctorId) {
+      return res.status(400).json({ error: 'Doctor ID is required' });
+    }
 
     // Check if clinic is open
     const clinic = await Clinic.findById(clinicId);
@@ -143,81 +146,53 @@ export const registerPatientAndAddToQueue = async (req, res) => {
       return res.status(400).json({ error: 'Clinic is currently closed' });
     }
 
+    // Check if doctor is specified and available
+    const doctor = await Doctor.findById(doctorId);
+    if (!doctor || !doctor.isActive || !doctor.isAvailable) {
+      return res.status(400).json({ error: 'Doctor is not available' });
+    }
+
     // Check if patient already exists
     let patient = await Patient.findOne({ phone });
-    
     if (!patient) {
-      // Create new patient
       patient = new Patient({ name, phone });
       await patient.save();
     }
 
-    // Check if this is the first booking since the clinic was last opened
-    const lastStatusChange = clinic.lastStatusChange;
-    const lastOpenedTime = new Date(lastStatusChange);
-    
-    // Find bookings since the clinic was last opened (not cancelled)
-    const bookingsSinceReopen = await Queue.countDocuments({
-      clinic: clinicId,
-      bookedAt: { $gte: lastOpenedTime },
-      status: { $ne: 'cancelled' }
-    });
-
-    console.log(`Bookings since clinic reopened at ${lastOpenedTime}: ${bookingsSinceReopen}`);
-
-    let nextNumber;
-    
-    if (bookingsSinceReopen === 0) {
-      // First booking since clinic reopened - start from 1
-      nextNumber = 1;
-      console.log(`First booking since clinic reopened - setting number to 1`);
-      
-      // Reset Redis counter to 0 for the new session
-      await redisClient.set(`clinic:${clinicId}:current`, 0);
-      console.log(`Reset Redis counter to 0 for new session`);
-    } else {
-      // Continue from the highest number + 1 since clinic reopened
-      const lastQueueSinceReopen = await Queue.findOne({ 
-        clinic: clinicId,
-        bookedAt: { $gte: lastOpenedTime },
-        status: { $ne: 'cancelled' }
-      })
-      .sort({ number: -1 })
-      .select('number')
-      .lean();
-
-      if (lastQueueSinceReopen) {
-        nextNumber = lastQueueSinceReopen.number + 1;
-        console.log(`Continuing from last queue number since reopen: ${lastQueueSinceReopen.number} -> ${nextNumber}`);
-      } else {
-        // Fallback: get the highest number ever
-        const lastQueueEver = await Queue.findOne({ clinic: clinicId })
-          .sort({ number: -1 })
-          .select('number')
-          .lean();
-        nextNumber = lastQueueEver ? lastQueueEver.number + 1 : 1;
-        console.log(`Fallback to highest number ever: ${nextNumber}`);
+    // Check if patient has current waiting queue
+    if (patient.currentQueue) {
+      const currentQueue = await Queue.findById(patient.currentQueue);
+      if (currentQueue && currentQueue.status === 'waiting') {
+        return res.status(400).json({ error: 'Patient already in queue' });
       }
     }
+
+    // Generate doctor-specific queue number
+    const nextNumber = await Queue.getNextQueueNumber(clinicId, doctorId);
 
     // Create queue entry
     const queue = new Queue({
       clinic: clinicId,
+      doctor: doctorId || null,
       patient: patient._id,
       number: nextNumber,
       status: 'waiting',
       bookedAt: new Date()
     });
     await queue.save();
-    console.log(`Created queue entry with number: ${nextNumber}`);
 
     // Update patient's current queue
     patient.currentQueue = queue._id;
     await patient.save();
 
+    // Initialize Redis counter if needed
+    const redisKey = doctorId ? `doctor:${doctorId}:current` : `clinic:${clinicId}:current`;
+    if (!(await redisClient.get(redisKey))) {
+      await redisClient.set(redisKey, 0);
+    }
+
     // Trigger queue update
-    await triggerQueueUpdate(clinicId);
-    console.log(`Queue update triggered`);
+    await triggerQueueUpdate(clinicId, doctorId);
 
     res.status(201).json({
       patient: {
@@ -225,7 +200,9 @@ export const registerPatientAndAddToQueue = async (req, res) => {
         name: patient.name,
         phone: patient.phone
       },
-      queueNumber: nextNumber
+      queueNumber: nextNumber,
+      isDoctorQueue: !!doctorId,
+      doctor: doctor ? { name: doctor.name, specialty: doctor.specialty } : null
     });
   } catch (err) {
     console.error('Error in registerPatientAndAddToQueue:', err);
@@ -263,9 +240,10 @@ export const getPatientQueueHistory = async (req, res) => {
       patient: patientId,
       status: { $in: ['served', 'cancelled'] }
     })
-    .populate('clinic', 'name')
+    .populate('clinic', 'name address')
+    .populate('doctor', 'name')
     .sort({ servedAt: -1, bookedAt: -1 })
-    .select('number status bookedAt servedAt clinic');
+    .select('number status bookedAt servedAt clinic doctor');
 
     res.json(history);
   } catch (err) {

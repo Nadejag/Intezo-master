@@ -1,4 +1,4 @@
-// lib/main.dart - Using pusher_channels_flutter
+// lib/main.dart - Updated for doctor-specific queues
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -12,6 +12,8 @@ import 'fronted/view/auth/login_screen.dart';
 import 'providers/auth_provider.dart';
 import 'providers/clinic_provider.dart';
 import 'providers/patient_provider.dart';
+import 'providers/theme_provider.dart';
+import 'providers/offline_provider.dart';
 
 void main() {
   runApp(const MyApp());
@@ -26,16 +28,19 @@ class MyApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()),
         ChangeNotifierProvider(create: (_) => ClinicProvider()),
-        ChangeNotifierProvider(create: (_) => PatientProvider())
+        ChangeNotifierProvider(create: (_) => PatientProvider()),
+        ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => OfflineProvider()),
       ],
-      child: MaterialApp(
-        title: 'Queue App',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          primarySwatch: Colors.blue,
-          visualDensity: VisualDensity.adaptivePlatformDensity,
-        ),
-        home: const AuthWrapper(),
+      child: Consumer<ThemeProvider>(
+        builder: (context, themeProvider, child) {
+          return MaterialApp(
+            title: 'Queue App',
+            debugShowCheckedModeBanner: false,
+            theme: themeProvider.themeData,
+            home: const AuthWrapper(),
+          );
+        },
       ),
     );
   }
@@ -61,33 +66,47 @@ class AuthWrapper extends StatelessWidget {
 }
 
 class SocketService {
-  static final SocketService _instance = SocketService._internal();
-  factory SocketService() => _instance;
+  static SocketService? _instance;
+  static SocketService get instance {
+    _instance ??= SocketService._internal();
+    return _instance!;
+  }
   SocketService._internal();
 
   PusherChannelsFlutter? _pusher;
   bool isConnected = false;
+  bool _isInitialized = false;
   String? _currentClinicId;
   String? _currentChannelName;
-  Function(String)? _onFallbackToPolling; // Callback for fallback
+  Function(String, String?)? _onFallbackToPolling;
 
-  // Set fallback callback
-  void setFallbackCallback(Function(String) callback) {
+  void setFallbackCallback(Function(String, String?) callback) {
     _onFallbackToPolling = callback;
   }
 
-// In SocketService - Update the connect method
-  Future<void> connect({String? clinicId}) async {
+  Future<void> connect({String? clinicId, String? doctorId}) async {
+    print('SocketService.connect called for clinic: $clinicId');
+    
+    if (_isInitialized && isConnected) {
+      print('Already connected, just switching channel');
+      if (clinicId != null) {
+        await joinClinicChannel(clinicId, doctorId: doctorId);
+      }
+      return;
+    }
+
+    if (_isInitialized) {
+      print('Already initializing, skipping');
+      return;
+    }
+    
+    print('Initializing new Pusher connection');
+    _isInitialized = true;
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
 
-      // Disconnect existing connection if any
-      if (isConnected) {
-        await disconnect();
-      }
-
-      // Initialize Pusher
       _pusher = PusherChannelsFlutter.getInstance();
 
       await _pusher!.init(
@@ -95,159 +114,138 @@ class SocketService {
         cluster: 'ap2',
         onConnectionStateChange: (String state, dynamic data) {
           print('Pusher connection state: $state');
-          isConnected = state == 'connected';
+          isConnected = state.toLowerCase() == 'connected';
+          print('isConnected set to: $isConnected');
 
           if (isConnected && clinicId != null) {
-            joinClinicChannel(clinicId);
-          } else if (state == 'disconnected' || state == 'failed') {
-            // Auto-reconnect on failure
-            Future.delayed(Duration(seconds: 3), () => connect(clinicId: clinicId));
+            print('Pusher connected, subscribing to channel for clinic: $clinicId');
+            Future.delayed(Duration(milliseconds: 500), () {
+              joinClinicChannel(clinicId, doctorId: doctorId);
+            });
           }
         },
         onError: (String message, int? code, dynamic error) {
           print('Pusher error: $message, code: $code');
           isConnected = false;
-
-          // Fallback to polling if Pusher fails
           if (clinicId != null && _onFallbackToPolling != null) {
-            _onFallbackToPolling!(clinicId);
+            _onFallbackToPolling!(clinicId, doctorId);
           }
-
-          // Auto-reconnect
-          Future.delayed(Duration(seconds: 5), () => connect(clinicId: clinicId));
         },
         onEvent: (event) {
-          print('Pusher event: ${event.eventName} - ${event.data}');
-
-          // Handle queue updates
-          if (event.eventName == 'queue-update' && event.data != null) {
-            try {
-              final data = json.decode(event.data!);
-              print('Queue update received: $data');
-
-              // Emit event to EventBus
-              EventBus().emitQueueUpdate(QueueUpdateEvent(
-                clinicId: _currentClinicId!,
-                queueData: data,
-              ));
-            } catch (e) {
-              print('Error parsing queue update: $e');
-            }
-          }
-        },
-        onAuthorizer: (String channelName, String socketId, dynamic options) async {
-          try {
-            final response = await http.post(
-              Uri.parse('http://192.168.100.69:3000/pusher/auth'),
-              headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Authorization': 'Bearer $token',
-              },
-              body: {
-                'socket_id': socketId,
-                'channel_name': channelName,
-              },
-            );
-
-            if (response.statusCode == 200) {
-              return json.decode(response.body);
-            } else {
-              print('Pusher auth failed: ${response.statusCode} - ${response.body}');
-              throw Exception('Auth failed: ${response.statusCode}');
-            }
-          } catch (e) {
-            print('Pusher auth error: $e');
-            throw e;
-          }
+          print('🔥 GLOBAL EVENT: ${event.eventName} on ${event.channelName}');
+          print('🔥 EVENT DATA: ${event.data}');
+          _handlePusherEvent(event);
         },
       );
 
-      // Connect to Pusher
       await _pusher!.connect();
       print('Pusher connection initiated');
 
     } catch (e) {
       print('Pusher connection error: $e');
-      // Retry connection after delay
-      Future.delayed(Duration(seconds: 5), () => connect(clinicId: clinicId));
+      _isInitialized = false;
     }
   }
 
-// In joinClinicChannel method - Replace with this:
-  Future<void> joinClinicChannel(String clinicId) async {
-    if (_pusher != null && isConnected) {
+  void _handlePusherEvent(dynamic event) {
+    print('Processing Pusher event: ${event.eventName} for clinic: $_currentClinicId');
+    
+    // Log ALL events for debugging
+    print('🔥 PROCESSING EVENT: ${event.eventName}');
+    
+    // Handle real-time events
+    if (event.data != null && event.data!.isNotEmpty && event.data != '{}') {
       try {
-        // Use public channel for patients (no auth required)
-        final channelName = 'public-clinic-$clinicId';
-
-        print('Attempting to subscribe to channel: $channelName');
-
-        // Subscribe to channel
-        final channel = await _pusher!.subscribe(
-          channelName: channelName,
-          onEvent: (event) {
-            print('Pusher event received: ${event.eventName} - ${event.data}');
-
-            if (event.eventName == 'queue-update' && event.data != null) {
-              try {
-                final data = json.decode(event.data!);
-                print('Queue update received via Pusher: $data');
-
-                // Emit event to EventBus
-                EventBus().emitQueueUpdate(QueueUpdateEvent(
-                  clinicId: clinicId,
-                  queueData: data,
-                ));
-              } catch (e) {
-                print('Error parsing queue update: $e');
-              }
-            }
-          },
-        );
-
-        _currentChannelName = channelName;
-        _currentClinicId = clinicId;
-        print('Successfully subscribed to channel: $channelName');
-
-      } catch (e) {
-        print('Error subscribing to channel: $e');
-        // Trigger fallback to polling
-        if (_onFallbackToPolling != null) {
-          _onFallbackToPolling!(clinicId);
+        final data = json.decode(event.data!);
+        print('🔥 REAL EVENT DATA: $data');
+        
+        // Handle different event types
+        if (event.eventName == 'queue-update') {
+          EventBus().emitQueueUpdate(QueueUpdateEvent(
+            clinicId: _currentClinicId!,
+            doctorId: null,
+            queueData: data,
+          ));
+        } else if (event.eventName == 'clinic-status-update') {
+          EventBus().emitClinicStatusUpdate(ClinicStatusUpdateEvent(
+            clinicId: _currentClinicId!,
+            statusData: data,
+          ));
+        } else {
+          // Default to queue update for any other event with data
+          EventBus().emitQueueUpdate(QueueUpdateEvent(
+            clinicId: _currentClinicId!,
+            doctorId: null,
+            queueData: data,
+          ));
         }
+        print('🔥 EVENT EMITTED TO UI!');
+      } catch (e) {
+        print('Error parsing event data: $e');
       }
     } else {
-      print('Pusher not connected, cannot subscribe to channel');
-      if (_onFallbackToPolling != null) {
-        _onFallbackToPolling!(clinicId);
-      }
+      print('🔥 EMPTY OR SYSTEM EVENT: ${event.eventName}');
     }
   }
 
-
-  void _handleQueueUpdate(Map<String, dynamic> data) {
-    try {
-      final clinicId = _currentClinicId;
-      if (clinicId != null) {
-        EventBus().emitQueueUpdate(QueueUpdateEvent(
-          clinicId: clinicId,
-          queueData: data,
-        ));
+  Future<void> joinClinicChannel(String clinicId, {String? doctorId}) async {
+    if (_pusher == null) {
+      print('Pusher not initialized, using polling');
+      if (_onFallbackToPolling != null) {
+        _onFallbackToPolling!(clinicId, doctorId);
       }
+      return;
+    }
+
+    try {
+      // Use doctor-specific public channel
+      final channelName = doctorId != null 
+          ? 'public-doctor-$doctorId'
+          : 'public-clinic-$clinicId';
+      
+      if (_currentChannelName == channelName) {
+        print('Already subscribed to channel: $channelName');
+        return;
+      }
+      
+      if (_currentChannelName != null) {
+        await _pusher!.unsubscribe(channelName: _currentChannelName!);
+      }
+
+      print('Attempting to subscribe to channel: $channelName');
+      await _pusher!.subscribe(
+        channelName: channelName,
+        onEvent: (event) {
+          print('🔥 CHANNEL EVENT: ${event.eventName} on $channelName');
+          print('🔥 CHANNEL DATA: ${event.data}');
+          _handlePusherEvent(event);
+        },
+      );
+      
+      _currentChannelName = channelName;
+      _currentClinicId = clinicId;
+      print('Successfully subscribed to channel: $channelName');
+
     } catch (e) {
-      print('Error handling queue update: $e');
+      print('Error subscribing to channel: $e');
+      if (_onFallbackToPolling != null) {
+        _onFallbackToPolling!(clinicId, doctorId);
+      }
     }
   }
 
   Future<void> disconnect() async {
-    if (_currentChannelName != null) {
+    if (_currentChannelName != null && _pusher != null) {
       await _pusher!.unsubscribe(channelName: _currentChannelName!);
-      _currentChannelName = null;
     }
-    if (_pusher != null) {
-      await _pusher!.disconnect();
-    }
-    isConnected = false;
+    _currentChannelName = null;
     _currentClinicId = null;
+    isConnected = false;
+  }
+
+  bool get isActive {
+    final active = isConnected && _currentChannelName != null;
+    print('Pusher isActive check: connected=$isConnected, channel=$_currentChannelName, active=$active');
+    return active;
   }
 }

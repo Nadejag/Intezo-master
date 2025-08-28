@@ -5,24 +5,33 @@ import mongoose from 'mongoose';
 import redisClient from '../config/redis.js'; // Add this import
 import Patient from '../models/Patient.js'; // Add this import
 import { broadcastClinicStatus, triggerQueueUpdate } from './queueController.js'; // Add this import
+import pusher from '../config/pusher.js';
+import Doctor from '../models/Doctor.js';
 
 // Add this function to track daily resets
+// Update checkDailyReset function
 const checkDailyReset = async (clinicId) => {
   try {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     
-    const todayBookings = await Queue.countDocuments({
-      clinic: clinicId,
-      bookedAt: { $gte: todayStart }
-    });
+    // Check if any doctor has bookings today
+    const doctors = await Doctor.find({ clinic: clinicId, isActive: true });
+    
+    for (const doctor of doctors) {
+      const todayBookings = await Queue.countDocuments({
+        clinic: clinicId,
+        doctor: doctor._id,
+        bookedAt: { $gte: todayStart }
+      });
 
-    // If no bookings today but Redis has old data, reset it
-    if (todayBookings === 0) {
-      const currentServing = parseInt(await redisClient.get(`clinic:${clinicId}:current`) || 0);
-      if (currentServing > 0) {
-        await redisClient.set(`clinic:${clinicId}:current`, 0);
-        console.log(`Daily reset: Clinic ${clinicId} Redis counter reset to 0`);
+      // If no bookings today but Redis has old data, reset it
+      if (todayBookings === 0) {
+        const currentServing = parseInt(await redisClient.get(`doctor:${doctor._id}:current`) || 0);
+        if (currentServing > 0) {
+          await redisClient.set(`doctor:${doctor._id}:current`, 0);
+          console.log(`Daily reset: Doctor ${doctor._id} Redis counter reset to 0`);
+        }
       }
     }
   } catch (err) {
@@ -172,16 +181,13 @@ export const toggleClinicStatus = async (req, res) => {
     clinic.isOpen = !clinic.isOpen;
     clinic.lastStatusChange = new Date();
     
-    if (clinic.isOpen) {
-      await resetClinicQueue(req.clinic._id);
-    }
-    
     await clinic.save();
     
-    // Broadcast the status change
-    await broadcastClinicStatus(req.clinic._id, {
+    // Broadcast the status change to public channel
+    await pusher.trigger(`public-clinic-${req.clinic._id}`, 'clinic-status-update', {
       isOpen: clinic.isOpen,
-      lastStatusChange: clinic.lastStatusChange
+      lastStatusChange: clinic.lastStatusChange.toISOString(),
+      clinicId: req.clinic._id
     });
     
     res.json({ 
@@ -194,17 +200,20 @@ export const toggleClinicStatus = async (req, res) => {
   }
 };
 
-// Reset clinic queue (set current number to 0)
-// In clinicController.js - Update resetClinicQueue function
+// Modify resetClinicQueue function to reset all doctor queues
 const resetClinicQueue = async (clinicId) => {
   try {
-    console.log(`Resetting clinic queue for clinic: ${clinicId}`);
+    console.log(`Resetting all doctor queues for clinic: ${clinicId}`);
     
-    // Reset Redis current number to 0
-    await redisClient.set(`clinic:${clinicId}:current`, 0);
-    console.log(`Redis counter reset to 0 for clinic: ${clinicId}`);
+    // Reset all doctor Redis counters to 0
+    const doctors = await Doctor.find({ clinic: clinicId, isActive: true });
     
-    // Also update any waiting queues to cancelled
+    for (const doctor of doctors) {
+      await redisClient.set(`doctor:${doctor._id}:current`, 0);
+      console.log(`Redis counter reset to 0 for doctor: ${doctor._id}`);
+    }
+    
+    // Update all waiting queues to cancelled
     const updateResult = await Queue.updateMany(
       { 
         clinic: clinicId, 
@@ -218,13 +227,11 @@ const resetClinicQueue = async (clinicId) => {
     
     console.log(`Cancelled ${updateResult.modifiedCount} waiting queues`);
 
-    // Clear patient currentQueue references for cancelled queues
+    // Clear patient currentQueue references
     const waitingQueues = await Queue.find({
       clinic: clinicId,
       status: 'cancelled'
     });
-    
-    console.log(`Found ${waitingQueues.length} cancelled queues to process`);
     
     for (const queue of waitingQueues) {
       if (queue.patient) {
@@ -235,13 +242,13 @@ const resetClinicQueue = async (clinicId) => {
             $addToSet: { queueHistory: queue._id }
           }
         );
-        console.log(`Cleared currentQueue for patient: ${queue.patient}`);
       }
     }
 
-    // IMPORTANT: Trigger queue update to notify all clients
-    await triggerQueueUpdate(clinicId);
-    console.log(`Queue update triggered for clinic: ${clinicId}`);
+    // Trigger queue updates for all doctors
+    for (const doctor of doctors) {
+      await triggerQueueUpdate(clinicId, doctor._id);
+    }
     
   } catch (err) {
     console.error('Error resetting clinic queue:', err);

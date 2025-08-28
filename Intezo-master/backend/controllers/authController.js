@@ -151,3 +151,35 @@ export const loginClinic = async (req, res) => {
     res.status(500).json({ error: 'Login failed', details: err.message });
   }
 };
+
+// Add to authController.js
+export const logoutFromAllDevices = async (req, res) => {
+  try {
+    // For patients
+    if (req.patient) {
+      // Clear any device-specific tokens or sessions
+      await Patient.findByIdAndUpdate(req.patient._id, {
+        $unset: { fcmToken: 1 }
+      });
+      
+      return res.json({ 
+        success: true, 
+        message: 'Logged out from all devices successfully' 
+      });
+    }
+    
+    // For clinics
+    if (req.clinic) {
+      // Implement clinic logout logic if needed
+      return res.json({ 
+        success: true, 
+        message: 'Logged out from all devices successfully' 
+      });
+    }
+    
+    res.status(401).json({ error: 'Not authenticated' });
+  } catch (err) {
+    console.error('Logout error:', err);
+    res.status(500).json({ error: 'Logout failed' });
+  }
+};
